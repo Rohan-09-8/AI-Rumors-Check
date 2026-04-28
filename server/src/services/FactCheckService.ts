@@ -1,29 +1,22 @@
 // FactCheckService.ts
-// Primary  : gemini-2.5-flash  (stable, supports Google Search grounding)
-// Fallback : gemini-2.0-flash  (always-available stable model)
 import { Rumor } from '../models/Rumor';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import mongoose from 'mongoose';
 
 const isDBConnected = () => mongoose.connection.readyState === 1;
 
-// ── Lazy singleton ───────────────────────────────────────────
 let _genAI: GoogleGenerativeAI | null = null;
 function getGenAI(): GoogleGenerativeAI {
   if (_genAI) return _genAI;
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error('GEMINI_API_KEY is undefined in .env');
-  // v1beta required for Google-Search grounding tools
   _genAI = new GoogleGenerativeAI(key);
-  console.log('[FactCheck] 🔑  Gemini client initialised');
+  console.log('[FactCheck] 🔑 Gemini client initialised');
   return _genAI;
 }
 
-// Models in preference order — first one that succeeds wins
-const MODEL_CASCADE = [
-  'gemini-2.5-flash',   // newest stable (confirmed available)
-  'gemini-2.0-flash',   // safe fallback
-];
+// Confirmed available models — tried in order on 404/429
+const MODEL_CASCADE = ['gemini-2.5-flash', 'gemini-2.0-flash'];
 
 type Verdict = 'True' | 'False' | 'Unverified' | 'Mixed';
 
@@ -32,12 +25,20 @@ interface GeminiResult {
   confidence: number;
   debunk_source: string[];
   reasoning: string;
+  rateLimited?: boolean;
 }
 
-// ── Service ──────────────────────────────────────────────────
 export class FactCheckService {
 
-  static async verifyRumor(query: string) {
+  static async verifyRumor(query: string): Promise<{
+    _id: string | null;
+    query: string;
+    verdict: Verdict;
+    confidence: number;
+    debunk_sources: string[];
+    reasoning: string;
+    rateLimited?: boolean;
+  }> {
     console.log(`[FactCheck] 🔍 Verifying: "${query.slice(0, 100)}"`);
 
     // Cache check
@@ -46,7 +47,14 @@ export class FactCheckService {
         const cached = await Rumor.findOne({ query });
         if (cached && cached.verdict !== 'Unverified') {
           console.log(`[FactCheck] ✅ Cache hit → ${cached.verdict}`);
-          return cached;
+          return {
+            _id: cached._id?.toString() ?? null,
+            query: cached.query,
+            verdict: cached.verdict as Verdict,
+            confidence: cached.confidence,
+            debunk_sources: cached.debunk_sources ?? [],
+            reasoning: cached.reasoning,
+          };
         }
       } catch (e: any) {
         console.warn('[FactCheck] Cache error:', e.message);
@@ -55,7 +63,11 @@ export class FactCheckService {
 
     const result = await this.geminiSearch(query);
 
-    // Persist if DB is available
+    // If rate limited, return early without saving
+    if (result.rateLimited) {
+      return { _id: null, query, ...result, debunk_sources: result.debunk_source };
+    }
+
     if (isDBConnected()) {
       try {
         const rumor = new Rumor({
@@ -66,74 +78,56 @@ export class FactCheckService {
           reasoning: result.reasoning,
         });
         await rumor.save();
-        return rumor;
+        return {
+          _id: rumor._id?.toString() ?? null,
+          query,
+          verdict: result.verdict,
+          confidence: result.confidence,
+          debunk_sources: result.debunk_source,
+          reasoning: result.reasoning,
+        };
       } catch (e: any) {
         console.warn('[FactCheck] DB save error:', e.message);
       }
     }
 
-    return {
-      _id: null,
-      query,
-      verdict: result.verdict,
-      confidence: result.confidence,
-      debunk_sources: result.debunk_source,
-      reasoning: result.reasoning,
-    };
+    return { _id: null, query, ...result, debunk_sources: result.debunk_source };
   }
 
-  // ── Gemini call with model cascade ──────────────────────────
   private static async geminiSearch(query: string): Promise<GeminiResult> {
-    const fallback = (reason: string): GeminiResult => ({
+    const fallback = (reason: string, rateLimited = false): GeminiResult => ({
       verdict: 'Unverified',
       confidence: 0,
       debunk_source: [],
       reasoning: reason,
+      rateLimited,
     });
 
     const prompt = [
-      'You are the Truth Engine, a professional fact-checking AI with access to current events.',
-      'Analyse the following claim carefully and respond with ONLY a valid JSON object.',
-      'Do NOT include markdown fences or any text outside the JSON.',
+      'You are the Truth Engine, a professional fact-checking AI.',
+      'Analyse the following claim and respond with ONLY a valid JSON object — no markdown, no prose.',
       '',
       `Claim: "${query}"`,
       '',
-      'JSON schema (respond with exactly this structure):',
-      '{',
-      '  "verdict": "True" | "False" | "Mixed" | "Unverified",',
-      '  "confidence": <float 0.0–1.0>,',
-      '  "debunk_source": ["<url>", ...],',
-      '  "reasoning": "<one concise paragraph explaining your verdict>"',
-      '}',
+      'Required JSON:',
+      '{"verdict":"True"|"False"|"Mixed"|"Unverified","confidence":<0.0-1.0>,"debunk_source":["<url>",...],"reasoning":"<one paragraph>"}',
     ].join('\n');
 
     let lastError = '';
 
     for (const modelName of MODEL_CASCADE) {
       try {
-        console.log(`[FactCheck] 🧠 Trying model: ${modelName}`);
-        const genAI = getGenAI();
-
-        // Use v1beta for Google Search grounding support
-        const model = genAI.getGenerativeModel(
-          {
-            model: modelName,
-            // Google Search grounding — lets the model cite live news
-            tools: [{ googleSearch: {} } as any],
-          },
+        console.log(`[FactCheck] 🧠 Trying ${modelName}...`);
+        const model = getGenAI().getGenerativeModel(
+          { model: modelName, tools: [{ googleSearch: {} } as any] },
           { apiVersion: 'v1beta' }
         );
 
         const response = await model.generateContent(prompt);
         const raw = response.response.text().trim();
-        console.log(`[FactCheck] 📩 ${modelName} raw:`, raw.slice(0, 250));
+        console.log(`[FactCheck] 📩 Raw (${modelName}):`, raw.slice(0, 200));
 
-        // Strip accidental markdown fences
-        const json = raw
-          .replace(/^```(?:json)?\s*/i, '')
-          .replace(/\s*```$/, '')
-          .trim();
-
+        const json = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
         const parsed = JSON.parse(json);
         const verdict: Verdict = ['True', 'False', 'Mixed', 'Unverified'].includes(parsed.verdict)
           ? parsed.verdict : 'Unverified';
@@ -148,19 +142,20 @@ export class FactCheckService {
 
       } catch (err: any) {
         lastError = err?.message ?? String(err);
-        console.warn(`[FactCheck] ⚠️  Model ${modelName} failed: ${lastError.slice(0, 120)}`);
+        console.warn(`[FactCheck] ⚠️ ${modelName} failed: ${lastError.slice(0, 120)}`);
 
-        // If not a 404 / model-not-found, don't try next model
-        const isModelNotFound = lastError.includes('404') || lastError.includes('not found');
-        if (!isModelNotFound) break;
+        // 429 = rate limit — return immediately, don't try next model
+        if (lastError.includes('429') || lastError.toLowerCase().includes('quota') || lastError.toLowerCase().includes('rate')) {
+          console.error('[FactCheck] 🚦 Rate limit hit — cooling down');
+          return fallback('RATE_LIMITED', true);
+        }
+
+        // Only cascade on 404 / model not found
+        const isNotFound = lastError.includes('404') || lastError.toLowerCase().includes('not found');
+        if (!isNotFound) break;
       }
     }
 
-    console.error('[FactCheck] ❌ All models failed. Last error:', lastError);
-    return fallback(
-      lastError.includes('API_KEY') || lastError.includes('undefined')
-        ? 'GEMINI_API_KEY is missing or invalid.'
-        : `Gemini error: ${lastError.slice(0, 200)}`
-    );
+    return fallback(`Gemini error: ${lastError.slice(0, 200)}`);
   }
 }

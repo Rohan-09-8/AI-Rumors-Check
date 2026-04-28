@@ -11,9 +11,8 @@ const verifySchema = z.object({
 router.post('/', async (req, res) => {
   console.log('[Verify] 📥 Body:', JSON.stringify(req.body).slice(0, 200));
 
-  // Guard: ensure JSON was parsed (body should be an object)
   if (!req.body || typeof req.body !== 'object') {
-    res.status(400).json({ error: 'Request body is missing or not JSON. Ensure Content-Type: application/json.' });
+    res.status(400).json({ error: 'Request body missing or not JSON.' });
     return;
   }
 
@@ -25,12 +24,23 @@ router.post('/', async (req, res) => {
 
   try {
     const result = await FactCheckService.verifyRumor(parsed.data.query);
+
+    // Surface 429 to the client so the UI can show the cooldown message
+    if (result.rateLimited) {
+      res.status(429).json({
+        error: 'RATE_LIMITED',
+        message: 'Truth Engine is cooling down... wait 30 seconds.',
+        retryAfter: 30,
+      });
+      return;
+    }
+
     res.json(result);
   } catch (err: any) {
     console.error('[Verify] ❌ Error:', err?.message);
     res.status(500).json({
       error: err?.message?.includes('GEMINI_API_KEY')
-        ? 'GEMINI_API_KEY is undefined in .env — AI cannot process requests.'
+        ? 'GEMINI_API_KEY is undefined in .env'
         : 'Internal server error',
     });
   }
