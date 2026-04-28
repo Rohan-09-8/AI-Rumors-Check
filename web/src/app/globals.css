@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0F172A;
+  --foreground: #F8FAFC;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  min-height: 100vh;
+  /* Deep Space Glass Base Background */
+  background-image: radial-gradient(circle at 50% 0%, #1E1B4B 0%, #0F172A 100%);
+  background-attachment: fixed;
+}
+
+@layer utilities {
+  .liquid-glass {
+    @apply bg-white/5 backdrop-blur-[20px] saturate-[180%] border border-white/10 shadow-refractive;
+  }
+}

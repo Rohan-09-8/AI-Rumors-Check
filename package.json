@@ -1,0 +1,9 @@
+{
+  "name": "vibecheck-ai",
+  "private": true,
+  "workspaces": [
+    "web",
+    "server",
+    "shared"
+  ]
+}
