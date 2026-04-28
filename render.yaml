@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: vibecheck-ai-backend
+    runtime: node
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: MONGODB_URI
+        sync: false
+      - key: GOOGLE_FACT_CHECK_API_KEY
+        sync: false
+    healthCheckPath: /health
