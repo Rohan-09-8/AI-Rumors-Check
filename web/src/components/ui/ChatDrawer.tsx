@@ -45,7 +45,7 @@ export const ChatDrawer = ({ isOpen, onClose, rumorId, initialVerdict }: ChatDra
         }
       ]);
     }
-  }, [isOpen, initialVerdict]);
+  }, [isOpen, initialVerdict, messages.length]);
 
   const showError = (msg: string) => {
     setMessages(prev => {

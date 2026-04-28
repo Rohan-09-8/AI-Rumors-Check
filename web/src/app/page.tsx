@@ -39,9 +39,10 @@ export default function Home() {
       const data = await res.json();
       setVerdictData(data);
       setTimeout(() => setIsChatOpen(true), 1500);
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Unknown error';
       console.error("[handleSearch]", e);
-      setError(e?.message || "Could not reach the Truth Engine. Is the backend running?");
+      setError(msg || "Could not reach the Truth Engine. Is the backend running?");
     } finally {
       setIsVerifying(false);
     }
@@ -163,7 +164,7 @@ export default function Home() {
                 </div>
               </div>
               <p className="text-white/80 text-base leading-relaxed border-l-2 border-deepspace-accent/40 pl-4 py-1 italic">
-                "{verdictData.reasoning}"
+                &ldquo;{verdictData.reasoning}&rdquo;
               </p>
               {verdictData.debunk_sources?.length > 0 && (
                 <div className="mt-4 flex flex-wrap gap-2">
