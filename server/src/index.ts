@@ -1,7 +1,3 @@
-// ============================================================
-// server/src/index.ts  — The FIRST file executed. dotenv MUST
-// be loaded before ANY other import reads process.env.
-// ============================================================
 import dotenv from 'dotenv';
 dotenv.config(); // ← MUST be first, before any service import
 
@@ -9,11 +5,13 @@ import express from 'express';
 import mongoose from 'mongoose';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
+import { initPool } from './services/geminiPool';
 
 // Routes are imported AFTER dotenv.config() so they read the correct env
 import searchRoutes from './routes/search';
 import verifyRoutes from './routes/verify';
 import chatRoutes from './routes/chat';
+
 
 // ── Validate Gemini key pool at startup ─────────────────────
 const geminiKeys = [
@@ -69,6 +67,9 @@ async function connectDB() {
 
 // ── Start ────────────────────────────────────────────────────
 (async () => {
+  // Initialise Gemini key pool (validates all keys at startup)
+  try { initPool(); } catch (e: any) { console.error('[FATAL]', e.message); }
+
   await connectDB();
   app.listen(PORT, () => {
     console.log(`\n[Server] 🚀  http://localhost:${PORT}`);
