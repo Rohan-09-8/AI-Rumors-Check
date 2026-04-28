@@ -14,6 +14,7 @@ node_modules/
 out/
 dist/
 build/
+server/dist/
 
 # Logs
 *.log

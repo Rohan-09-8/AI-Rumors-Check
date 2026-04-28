@@ -4,10 +4,13 @@ services:
     runtime: node
     rootDir: server
     buildCommand: npm install && npm run build
-    startCommand: npm start
+    startCommand: node dist/index.js
+    plan: free
     envVars:
       - key: PORT
         value: 10000
+      - key: NODE_ENV
+        value: production
       - key: GEMINI_API_KEY
         sync: false
       - key: MONGODB_URI
@@ -15,3 +18,4 @@ services:
       - key: GOOGLE_FACT_CHECK_API_KEY
         sync: false
     healthCheckPath: /health
+    autoDeploy: true
