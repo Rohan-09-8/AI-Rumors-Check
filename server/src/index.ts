@@ -15,11 +15,17 @@ import searchRoutes from './routes/search';
 import verifyRoutes from './routes/verify';
 import chatRoutes from './routes/chat';
 
-// ── Validate critical env vars at startup ────────────────────
-if (!process.env.GEMINI_API_KEY) {
-  console.error('[FATAL] ❌  GEMINI_API_KEY is undefined in .env — AI will NOT work');
+// ── Validate Gemini key pool at startup ─────────────────────
+const geminiKeys = [
+  process.env.GEMINI_API_KEY,
+  process.env.GEMINI_API_KEY_2,
+  process.env.GEMINI_API_KEY_3,
+].filter(Boolean);
+
+if (geminiKeys.length === 0) {
+  console.error('[FATAL] ❌  No GEMINI_API_KEY set — AI will NOT work');
 } else {
-  console.log('[Config] ✅  GEMINI_API_KEY loaded');
+  console.log(`[Config] ✅  ${geminiKeys.length} Gemini API key(s) loaded`);
 }
 
 const app  = express();
@@ -41,7 +47,11 @@ app.use('/api/chat',   chatRoutes);
 // ── Health ───────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({
   status: 'ok',
-  gemini: !!process.env.GEMINI_API_KEY,
+  geminiKeys: [
+    process.env.GEMINI_API_KEY,
+    process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_API_KEY_3,
+  ].filter(Boolean).length,
   db: mongoose.connection.readyState === 1,
 }));
 
@@ -62,7 +72,7 @@ async function connectDB() {
   await connectDB();
   app.listen(PORT, () => {
     console.log(`\n[Server] 🚀  http://localhost:${PORT}`);
-    console.log(`[Server] GEMINI_API_KEY : ${process.env.GEMINI_API_KEY ? '✅' : '❌ MISSING'}`);
-    console.log(`[Server] DB Status      : ${mongoose.connection.readyState === 1 ? '✅ Connected' : '⚠️  Not connected'}\n`);
+    console.log(`[Server] Gemini Keys : ${geminiKeys.length} loaded ✅`);
+    console.log(`[Server] DB Status   : ${mongoose.connection.readyState === 1 ? '✅ Connected' : '⚠️  Not connected'}\n`);
   });
 })();
